@@ -6,3 +6,4 @@ backend
 scikit-learn
 yfinance
 datetime
+scipy

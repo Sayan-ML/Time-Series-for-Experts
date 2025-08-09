@@ -21,9 +21,14 @@ This Streamlit app provides an interactive environment for comprehensive time se
   - Support for ARIMA and SARIMA models  
   - User-defined hyperparameters based on domain knowledge  
 
+- **Stock Data Integration**:  
+  - Connects to Yahoo Finance API via `yfinance`  
+  - Users can select from various US stocks to download historical monthly data  
+  - Perform the same analysis and forecasting on stock price data  
+
 ## How to Use
 
-1. Upload your **monthly** time series data in the specified format.  
+1. Upload your **monthly** time series data in the specified format or select a US stock ticker to fetch historical monthly data.  
 2. Review the diagnostic plots and statistical test results to assess stationarity and seasonality.  
 3. Use the insights along with your domain knowledge to select appropriate ARIMA/SARIMA hyperparameters (p, d, q, seasonal order).  
 4. Run the model and evaluate forecasting performance.
@@ -40,4 +45,4 @@ See [requirements.txt](requirements.txt) for the list of required packages.
 
 ## License
 
-MIT License  
+MIT License

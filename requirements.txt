@@ -1,9 +1,11 @@
+streamlit
 pandas
 numpy
 matplotlib
-statsmodels
-backend
 scikit-learn
+statsmodels
 yfinance
-datetime
-scipy
+reportlab
+requests
+beautifulsoup4
+pillow

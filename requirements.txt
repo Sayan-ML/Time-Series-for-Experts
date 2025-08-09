@@ -4,9 +4,13 @@ numpy
 matplotlib
 scikit-learn
 statsmodels
+tensorflow
 yfinance
 reportlab
 requests
 beautifulsoup4
 pillow
-datetime
+scipy
+fpdf2 
+pdfkit 
+weasyprint

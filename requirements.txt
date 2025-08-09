@@ -4,4 +4,6 @@ matplotlib
 statsmodels
 backend
 scikit-learn
+yfinance
+
 

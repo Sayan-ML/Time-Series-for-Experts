@@ -13,7 +13,17 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import yfinance as yf
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from datetime import datetime, timedelta
-
+import io
+import base64
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+from datetime import datetime
+import tempfile
+import os
 from backend import (
     log_transform,
     boxcox_transform,
@@ -267,6 +277,298 @@ else:  # Yahoo Finance Data
             st.error(f"Error fetching data: {e}")
             st.session_state.df = None
 
+def create_comprehensive_pdf_report():
+    """Generate a comprehensive PDF report with all page content"""
+    
+    # Create a BytesIO buffer for the PDF
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=72, leftMargin=72,
+                           topMargin=72, bottomMargin=18)
+    
+    # Container for the 'Flowable' objects
+    story = []
+    
+    # List to keep track of temporary files (important for cleanup)
+    temp_files = []
+    
+    # Get styles
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'],
+                                fontSize=24, spaceAfter=30, textColor=colors.darkblue,
+                                alignment=TA_CENTER)
+    
+    heading_style = ParagraphStyle('CustomHeading', parent=styles['Heading2'],
+                                  fontSize=16, spaceAfter=12, textColor=colors.darkblue)
+    
+    normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'],
+                                 fontSize=11, spaceAfter=12, alignment=TA_JUSTIFY)
+    
+    try:
+        # Title Page
+        story.append(Paragraph("📈 Time Series Analysis Report", title_style))
+        story.append(Spacer(1, 20))
+        story.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", normal_style))
+        story.append(Spacer(1, 40))
+        
+        # Data Source Information
+        if 'symbol_info' in st.session_state:
+            info = st.session_state.symbol_info
+            story.append(Paragraph("📊 Data Source Information", heading_style))
+            data_info = [
+                ['Symbol', info['symbol']],
+                ['Price Type', info['price_type']],
+                ['Interval', info['interval']],
+                ['Start Date', str(info['start_date'])],
+                ['End Date', str(info['end_date'])]
+            ]
+            
+            data_table = Table(data_info, colWidths=[2*inch, 3*inch])
+            data_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+                ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(data_table)
+            story.append(Spacer(1, 20))
+        
+        # Data Summary
+        if st.session_state.df is not None:
+            df = st.session_state.df
+            story.append(Paragraph("📊 Data Summary", heading_style))
+            
+            summary_data = [
+                ['Metric', 'Value'],
+                ['Shape', f"{df.shape[0]} rows × {df.shape[1]} columns"],
+                ['Start Date', str(df.index.min().date())],
+                ['End Date', str(df.index.max().date())],
+                ['Latest Value', f"{df['value'].iloc[-1]:.2f}"],
+                ['Mean', f"{df['value'].mean():.2f}"],
+                ['Standard Deviation', f"{df['value'].std():.2f}"],
+                ['Min Value', f"{df['value'].min():.2f}"],
+                ['Max Value', f"{df['value'].max():.2f}"]
+            ]
+            
+            summary_table = Table(summary_data, colWidths=[2.5*inch, 2.5*inch])
+            summary_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
+                ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(summary_table)
+            story.append(Spacer(1, 20))
+        
+        # Fixed function to add plots
+        def add_plot_to_story_fixed(fig, title, story, temp_files):
+            """Helper function to add matplotlib plots to PDF - FIXED VERSION"""
+            try:
+                # Create temporary file but don't delete it yet
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                temp_filename = temp_file.name
+                temp_file.close()  # Close file handle but keep the file
+                
+                # Save plot to the temporary file
+                fig.savefig(temp_filename, dpi=300, bbox_inches='tight', 
+                           facecolor='white', edgecolor='none')
+                
+                # Add to temp_files list for later cleanup
+                temp_files.append(temp_filename)
+                
+                # Verify file exists before adding to story
+                if os.path.exists(temp_filename):
+                    # Add plot to story
+                    story.append(Paragraph(title, heading_style))
+                    img = Image(temp_filename, width=6*inch, height=3*inch)
+                    story.append(img)
+                    story.append(Spacer(1, 20))
+                else:
+                    # If file doesn't exist, add a placeholder
+                    story.append(Paragraph(f"{title} (Plot unavailable)", heading_style))
+                    story.append(Spacer(1, 10))
+                
+            except Exception as e:
+                # If there's an error with the plot, add a placeholder
+                story.append(Paragraph(f"{title} (Error generating plot: {str(e)})", heading_style))
+                story.append(Spacer(1, 10))
+        
+        # Time Series Plot
+        if st.session_state.df is not None:
+            try:
+                fig, ax = plt.subplots(figsize=(12, 6))
+                ax.plot(df["value"], color="#1f77b4", linewidth=2)
+                ax.set_title("Time Series", fontsize=16)
+                ax.grid(True, alpha=0.3)
+                ax.set_facecolor('white')
+                fig.patch.set_facecolor('white')
+                
+                add_plot_to_story_fixed(fig, "📈 Time Series Plot", story, temp_files)
+                plt.close(fig)
+            except Exception as e:
+                story.append(Paragraph(f"📈 Time Series Plot (Error: {str(e)})", heading_style))
+                story.append(Spacer(1, 10))
+        
+        # Model Performance Metrics
+        if 'mae' in st.session_state:
+            story.append(Paragraph("📊 Model Performance Metrics", heading_style))
+            
+            metrics_data = [
+                ['Metric', 'Value'],
+                ['MAE (Mean Absolute Error)', f"{st.session_state['mae']:.4f}"],
+                ['RMSE (Root Mean Square Error)', f"{st.session_state['rmse']:.4f}"],
+                ['MAPE (Mean Absolute Percentage Error)', f"{st.session_state['mape']:.2f}%"],
+                ['R² Score', f"{st.session_state['r2']:.4f}"]
+            ]
+            
+            metrics_table = Table(metrics_data, colWidths=[3*inch, 2*inch])
+            metrics_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.darkgreen),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgreen),
+                ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(metrics_table)
+            story.append(Spacer(1, 20))
+        
+        # Forecast vs Actual Plot
+        if 'inv_forecast' in st.session_state:
+            try:
+                fig, ax = plt.subplots(figsize=(12, 6))
+                ax.plot(st.session_state['test_index'], st.session_state['test_original'], 
+                        label='Actual', color='#1f77b4', linewidth=2, marker='o', markersize=4)
+                ax.plot(st.session_state['test_index'], st.session_state['inv_forecast'], 
+                        label='Forecast', color='#ff7f0e', linewidth=2, linestyle='--', marker='s', markersize=4)
+                ax.set_title("Actual vs Forecast Comparison", fontsize=16)
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+                ax.set_facecolor('white')
+                fig.patch.set_facecolor('white')
+                
+                add_plot_to_story_fixed(fig, "📉 Actual vs Forecast Comparison", story, temp_files)
+                plt.close(fig)
+            except Exception as e:
+                story.append(Paragraph(f"📉 Actual vs Forecast Plot (Error: {str(e)})", heading_style))
+                story.append(Spacer(1, 10))
+        
+        # Future Forecast Plot
+        if 'future_forecast' in st.session_state:
+            try:
+                fig, ax = plt.subplots(figsize=(12, 6))
+                
+                # Plot historical data (last 50 points)
+                if st.session_state.df is not None:
+                    historical_data = st.session_state.df['value'].tail(50)
+                    ax.plot(historical_data.index, historical_data, label='Historical Data', 
+                           color='#1f77b4', linewidth=2, alpha=0.7)
+                
+                # Plot future forecast
+                ax.plot(st.session_state['future_index'], st.session_state['future_forecast'], 
+                       label='Future Forecast', color='#2ca02c', linewidth=3, marker='o', markersize=4)
+                
+                # Plot confidence interval
+                if 'conf_lower' in st.session_state:
+                    ax.fill_between(st.session_state['future_index'], 
+                                   st.session_state['conf_lower'], 
+                                   st.session_state['conf_upper'], 
+                                   color='#2ca02c', alpha=0.2, label='Confidence Interval')
+                
+                ax.set_title("Future Forecast", fontsize=16)
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+                ax.set_facecolor('white')
+                fig.patch.set_facecolor('white')
+                
+                add_plot_to_story_fixed(fig, "🔮 Future Forecast", story, temp_files)
+                plt.close(fig)
+            except Exception as e:
+                story.append(Paragraph(f"🔮 Future Forecast Plot (Error: {str(e)})", heading_style))
+                story.append(Spacer(1, 10))
+        
+        # Forecast Summary Table
+        if 'future_forecast' in st.session_state:
+            story.append(PageBreak())
+            story.append(Paragraph("📋 Forecast Summary Table", heading_style))
+            
+            # Prepare forecast data
+            forecast_data = [['Date', 'Forecast', 'Lower Bound', 'Upper Bound']]
+            
+            for i, date in enumerate(st.session_state['future_index']):
+                row = [
+                    date.strftime('%Y-%m-%d'),
+                    f"{st.session_state['future_forecast'].iloc[i]:.2f}",
+                    f"{st.session_state['conf_lower'].iloc[i]:.2f}" if 'conf_lower' in st.session_state else "N/A",
+                    f"{st.session_state['conf_upper'].iloc[i]:.2f}" if 'conf_upper' in st.session_state else "N/A"
+                ]
+                forecast_data.append(row)
+            
+            # Limit to first 20 rows for PDF readability
+            if len(forecast_data) > 21:  # 1 header + 20 data rows
+                forecast_data = forecast_data[:21]
+                forecast_data.append(['...', '...', '...', '...'])
+            
+            forecast_table = Table(forecast_data, colWidths=[1.2*inch, 1.2*inch, 1.2*inch, 1.2*inch])
+            forecast_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.purple),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lavender),
+                ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(forecast_table)
+            story.append(Spacer(1, 20))
+        
+        # Model Information
+        if 'trained_model' in st.session_state:
+            story.append(Paragraph("🤖 Model Information", heading_style))
+            model = st.session_state['trained_model']
+            model_info = f"""
+            <b>Model Type:</b> {st.session_state.get('model_type', 'Unknown')}<br/>
+            <b>AIC:</b> {getattr(model, 'aic', 'N/A')}<br/>
+            <b>BIC:</b> {getattr(model, 'bic', 'N/A')}<br/>
+            """
+            story.append(Paragraph(model_info, normal_style))
+            story.append(Spacer(1, 20))
+        
+        # Footer
+        story.append(Spacer(1, 40))
+        story.append(Paragraph("Generated by Time Series Analysis App", 
+                              ParagraphStyle('Footer', parent=styles['Normal'], 
+                                           fontSize=10, textColor=colors.grey, 
+                                           alignment=TA_CENTER)))
+        
+        # Build PDF
+        doc.build(story)
+        pdf_bytes = buffer.getvalue()
+        buffer.close()
+        
+        return pdf_bytes
+        
+    finally:
+        # Clean up all temporary files
+        for temp_file in temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.unlink(temp_file)
+            except Exception as cleanup_error:
+                print(f"Warning: Could not delete temporary file {temp_file}: {cleanup_error}")
 
 # =========================
 # 📊 DATA SUMMARY & PLOTS
@@ -858,7 +1160,6 @@ if 'trained_model' in st.session_state:
                 # ARIMA/SARIMA Forecast
                 future_forecast_obj = model.get_forecast(steps=forecast_months)
                 future_forecast = future_forecast_obj.predicted_mean
-                print(type(future_forecast))
                 future_forecast.index = future_index
                 
                 # Get confidence intervals
@@ -881,38 +1182,22 @@ if 'trained_model' in st.session_state:
                 st.session_state['conf_lower'] = inv_conf_lower
                 st.session_state['conf_upper'] = inv_conf_upper
 
-                # Display ARIMA/SARIMA forecast
-                st.subheader(f"📈 {model_type} Forecast for next {forecast_months} periods")
-                
+                # Plot ARIMA/SARIMA forecast
                 fig, ax = plt.subplots(figsize=(14, 8))
-                
-                # Plot historical data (last 50 points for context)
                 historical_data = st.session_state.df['value'].tail(50)
-                ax.plot(historical_data.index, historical_data, label='Historical Data', 
-                       color='#00E5FF', linewidth=2, alpha=0.7)
-                
-                # Plot test data
-                ax.plot(test_original.index, test_original, label='Test Data', 
-                       color='#FF4081', linewidth=2)
-                
-                # Plot forecast
-                ax.plot(future_index, inv_future_forecast, label=f'{model_type} Forecast', 
-                       color='#8BC34A', linewidth=3, marker='o', markersize=4)
-                
-                # Plot confidence interval
-                ax.fill_between(future_index, inv_conf_lower, inv_conf_upper, 
-                               color='#8BC34A', alpha=0.2, label='Confidence Interval')
-                
+                ax.plot(historical_data.index, historical_data, label='Historical Data', color='#00E5FF', linewidth=2, alpha=0.7)
+                ax.plot(test_original.index, test_original, label='Test Data', color='#FF4081', linewidth=2)
+                ax.plot(future_index, inv_future_forecast, label=f'{model_type} Forecast', color='#8BC34A', linewidth=3, marker='o', markersize=4)
+                ax.fill_between(future_index, inv_conf_lower, inv_conf_upper, color='#8BC34A', alpha=0.2, label='Confidence Interval')
                 ax.set_title(f"{model_type} Future Forecast", color="#FFEB3B", fontsize=16)
                 ax.legend(loc='center left', bbox_to_anchor=(1.0, 0.5))
                 ax.grid(True, alpha=0.3)
                 plt.subplots_adjust(right=0.8)
-                st.pyplot(fig)
+                st.session_state['forecast_plot'] = fig  # store figure
 
                 # Holt-Winters forecast if requested
                 if include_holt_winters:
                     try:
-                        # Get training data for Holt-Winters
                         if filtered_transforms:
                             hw_train_data = apply_transformations(
                                 st.session_state.df['value'].loc[:test_original.index[0]], 
@@ -932,57 +1217,35 @@ if 'trained_model' in st.session_state:
                         hw_forecast = hw_model.forecast(forecast_months)
                         hw_forecast.index = future_index
                         
-                        # Inverse transform Holt-Winters forecast
                         if filtered_transforms:
                             inv_hw_forecast = inverse_transformations(hw_forecast, filtered_transforms, boxcox_lambda, linear_detrend_params)
                         else:
                             inv_hw_forecast = hw_forecast
 
-                        st.subheader(f"📊 Holt-Winters Forecast for next {forecast_months} periods")
-                        
-                        fig, ax = plt.subplots(figsize=(14, 8))
-                        
-                        # Plot historical data
-                        ax.plot(historical_data.index, historical_data, label='Historical Data', 
-                               color='#00E5FF', linewidth=2, alpha=0.7)
-                        
-                        # Plot test data
-                        ax.plot(test_original.index, test_original, label='Test Data', 
-                               color='#FF4081', linewidth=2)
-                        
-                        # Plot Holt-Winters forecast
-                        ax.plot(future_index, inv_hw_forecast, label='Holt-Winters Forecast', 
-                               color='#FFC107', linewidth=3, marker='s', markersize=4)
-                        
+                        st.session_state['hw_forecast'] = inv_hw_forecast
+
+                        # Holt-Winters plot
+                        hw_fig, ax = plt.subplots(figsize=(14, 8))
+                        ax.plot(historical_data.index, historical_data, label='Historical Data', color='#00E5FF', linewidth=2, alpha=0.7)
+                        ax.plot(test_original.index, test_original, label='Test Data', color='#FF4081', linewidth=2)
+                        ax.plot(future_index, inv_hw_forecast, label='Holt-Winters Forecast', color='#FFC107', linewidth=3, marker='s', markersize=4)
                         ax.set_title("Holt-Winters Future Forecast", color="#FFEB3B", fontsize=16)
                         ax.legend(loc='center left', bbox_to_anchor=(1.0, 0.5))
                         ax.grid(True, alpha=0.3)
                         plt.subplots_adjust(right=0.8)
-                        st.pyplot(fig)
+                        st.session_state['holt_winters_plot'] = hw_fig
 
                         # Comparison plot
-                        st.subheader("🔄 Model Comparison")
-                        fig, ax = plt.subplots(figsize=(14, 8))
-                        
-                        # Plot historical and test data
-                        ax.plot(historical_data.index, historical_data, label='Historical Data', 
-                               color='#00E5FF', linewidth=2, alpha=0.7)
-                        ax.plot(test_original.index, test_original, label='Test Data', 
-                               color='#FF4081', linewidth=2)
-                        
-                        # Plot both forecasts
-                        ax.plot(future_index, inv_future_forecast, label=f'{model_type} Forecast', 
-                               color='#8BC34A', linewidth=2, marker='o', markersize=4)
-                        ax.plot(future_index, inv_hw_forecast, label='Holt-Winters Forecast', 
-                               color='#FFC107', linewidth=2, marker='s', markersize=4)
-                        
+                        comp_fig, ax = plt.subplots(figsize=(14, 8))
+                        ax.plot(historical_data.index, historical_data, label='Historical Data', color='#00E5FF', linewidth=2, alpha=0.7)
+                        ax.plot(test_original.index, test_original, label='Test Data', color='#FF4081', linewidth=2)
+                        ax.plot(future_index, inv_future_forecast, label=f'{model_type} Forecast', color='#8BC34A', linewidth=2, marker='o', markersize=4)
+                        ax.plot(future_index, inv_hw_forecast, label='Holt-Winters Forecast', color='#FFC107', linewidth=2, marker='s', markersize=4)
                         ax.set_title("Forecast Comparison", color="#FFEB3B", fontsize=16)
                         ax.legend(loc='center left', bbox_to_anchor=(1.0, 0.5))
                         ax.grid(True, alpha=0.3)
                         plt.subplots_adjust(right=0.8)
-                        st.pyplot(fig)
-
-                        st.session_state['hw_forecast'] = inv_hw_forecast
+                        st.session_state['comparison_plot'] = comp_fig
 
                     except Exception as e:
                         st.warning(f"⚠️ Holt-Winters forecasting failed: {e}")
@@ -993,32 +1256,43 @@ if 'trained_model' in st.session_state:
             st.error(f"❌ Future forecasting failed:")
             st.exception(e)
 
-# =========================
-# 📊 FORECAST SUMMARY TABLE
-# =========================
+# ===== Render plots if available =====
+if 'forecast_plot' in st.session_state:
+    st.pyplot(st.session_state['forecast_plot'])
+if 'holt_winters_plot' in st.session_state:
+    st.pyplot(st.session_state['holt_winters_plot'])
+if 'comparison_plot' in st.session_state:
+    st.pyplot(st.session_state['comparison_plot'])
+
+# ===== Forecast Summary Table =====
 if 'future_forecast' in st.session_state:
     st.subheader("📋 Forecast Summary Table")
-    
-    # Create summary dataframe
     summary_data = {
         'Date': st.session_state['future_index'].strftime('%Y-%m-%d'),
         f'{st.session_state["model_type"]} Forecast': st.session_state['future_forecast'].round(2),
         'Lower Bound': st.session_state['conf_lower'].round(2),
         'Upper Bound': st.session_state['conf_upper'].round(2)
     }
-    
     if 'hw_forecast' in st.session_state:
         summary_data['Holt-Winters Forecast'] = st.session_state['hw_forecast'].round(2)
-    
     summary_df = pd.DataFrame(summary_data)
     st.dataframe(summary_df, use_container_width=True)
 
-# =========================
-# 📖 FOOTER AND INSTRUCTIONS
-# =========================
+# ===== PDF Export =====
 st.markdown("---")
-st.markdown("""
-<div style="text-align: center; margin-top: 2rem; color: #666;">
-    <p>📈 Time Series AutoML Pipeline - Built with Streamlit & ❤️</p>
-</div>
-""", unsafe_allow_html=True)
+st.subheader("📄 Export Report")
+
+if st.button("🔽 Generate Comprehensive PDF Report", type="primary"):
+    try:
+        with st.spinner("Generating comprehensive PDF report..."):
+            pdf_bytes = create_comprehensive_pdf_report()
+            st.download_button(
+                label="📥 Download PDF Report",
+                data=pdf_bytes,
+                file_name=f"time_series_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf"
+            )
+            st.success("✅ PDF report generated successfully!")
+    except Exception as e:
+        st.error(f"❌ Error generating PDF: {e}")
+        st.exception(e)
